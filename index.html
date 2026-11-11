@@ -201,6 +201,7 @@ pre{background:#0c0c0f;border:1px solid var(--bd);border-radius:10px;padding:12p
 .receipt .c{text-align:center}
 .receipt hr{border:0;border-top:1px dashed #000;margin:6px 0}
 .receipt .rl{display:flex;justify-content:space-between;gap:6px}
+.receipt .bx{border:1px dashed #000;text-align:center;padding:3px 2px;margin:5px 0}
 
 #cartBar{display:none}
 
@@ -366,9 +367,10 @@ body.cust nav,body.cust main{display:none!important}
         <div id="paidWrap"><label>Uang diterima (F9)</label><input id="paid" type="number" inputmode="numeric" min="0" placeholder="0"></div>
       </div>
       <div class="quick" id="quick"></div>
-      <div class="tot" style="margin-top:4px"><div><span>Kembalian</span><b id="tChg" style="font-size:20px">Rp 0</b></div></div>
+      <div class="tot" style="margin-top:4px"><div><span id="tChgL">Kembalian</span><b id="tChg" style="font-size:20px">Rp 0</b></div></div>
       <div class="row mt">
         <button class="btn sec" onclick="clearCart()">Kosongkan</button>
+        <button class="btn sec" id="btnBill" onclick="printBill()" title="Cetak struk tagihan sebelum pelanggan membayar">Cetak Tagihan</button>
         <button class="btn" id="btnPay" onclick="pay()" style="flex:2;font-size:17px">BAYAR</button>
       </div>
     </div>
@@ -665,7 +667,7 @@ body.cust nav,body.cust main{display:none!important}
     <div><label>Metode bayar</label><select id="emMethod"><option>Tunai</option><option>QRIS</option><option>Transfer</option></select></div>
     <div id="emPaidWrap"><label>Uang diterima</label><input id="emPaid" type="number" inputmode="numeric" min="0"></div>
   </div>
-  <div class="tot" style="margin-top:4px"><div><span>Kembalian</span><b id="emChg">Rp 0</b></div></div>
+  <div class="tot" style="margin-top:4px"><div><span id="emChgL">Kembalian</span><b id="emChg">Rp 0</b></div></div>
   <div id="emMsg" class="sub"></div>
   <div class="sub mt">Stok barang yang dilacak disesuaikan otomatis. Transaksi asli tetap tersimpan sebagai riwayat revisi.</div>
   <div class="row mt"><button class="btn sec" onclick="closeEdit()">Batal</button><button class="btn" id="emSave" onclick="saveEdit()" style="flex:2">Simpan Perubahan</button></div>
@@ -1180,9 +1182,13 @@ function renderTotals() {
   $('#quick').style.display = cash ? '' : 'none';
   const paid = cash ? num($('#paid').value) : total;
   const chgv = paid - total;
-  $('#tChg').textContent = rp(Math.max(0, chgv));
-  $('#tChg').style.color = chgv < 0 && cart.length && cash ? 'var(--red)' : '';
-  $('#btnPay').disabled = !cart.length || (cash && paid < total);
+  const debt = cash && cart.length && chgv < 0 && $('#paid').value.trim() !== '';
+  $('#tChg').textContent = debt ? rpS(chgv) : rp(Math.max(0, chgv));
+  $('#tChg').style.color = debt ? 'var(--red)' : '';
+  $('#tChgL').textContent = debt ? 'Kurang bayar (utang)' : 'Kembalian';
+  $('#btnPay').textContent = debt ? 'SIMPAN (UTANG)' : 'BAYAR';
+  $('#btnPay').disabled = !cart.length;
+  $('#btnBill').disabled = !cart.length;
   const amounts = [5000, 10000, 20000, 50000, 100000];
   $('#quick').innerHTML = `<button class="btn sec" onclick="setPaid(${total})">Uang pas</button>` + amounts.map(a => `<button class="btn sec" onclick="setPaid(${a})">${n0(a)}</button>`).join('');
   $('#cbInfo').textContent = cart.length + ' item';
@@ -1207,13 +1213,17 @@ function nextNo() {
   for (const s of sales) if (s.no.startsWith(d)) max = Math.max(max, parseInt(s.no.slice(d.length)) || 0);
   return d + String(max + 1).padStart(4, '0');
 }
+function confirmDebt(name, short, paid, total, focusSel) {
+  if (!name) { toast('Uang diterima kurang. Untuk utang / kurang bayar, isi nama pelanggan dulu'); if (focusSel) { const el = $(focusSel); if (el) el.focus(); } return false; }
+  return confirm('Pelanggan ' + name + ' kurang bayar ' + rp(short) + ' (dibayar ' + rp(paid) + ' dari total ' + rp(total) + ').\n\nSimpan sebagai utang?');
+}
 function pay() {
   if (!cart.length) return;
   const { subtotal, disc, total } = calc();
   const method = $('#method').value;
   const paid = method === 'Tunai' ? num($('#paid').value) : total;
-  if (paid < total) { toast('Uang diterima kurang'); return; }
   for (const c of cart) { const p = prod(c.id); if (!fits(p, c.qty)) { toast('Stok ' + p.name + ' tidak cukup (tersedia ' + availText(p) + ')'); return; } }
+  if (paid < total && !confirmDebt($('#cust').value.trim(), total - paid, paid, total, '#cust')) return;
   const now = Date.now();
   const items = cart.map(c => {
     const p = prod(c.id);
@@ -1278,16 +1288,32 @@ function receiptHTML(s) {
   if (oth.length) parts.push(section(both ? 'BARANG LAIN' : '', oth));
   return `<div class="receipt" style="width:${w}">
     <div class="c"><b style="font-size:15px">${esc(settings.name)}</b></div><hr>
-    <div>No: ${esc(s.no)}</div>
+    ${s.bill ? '<div class="bx"><b>TAGIHAN</b><br>BELUM DIBAYAR</div>' : `<div>No: ${esc(s.no)}</div>`}
     <div>${fmtTime(s.time)}</div>${s.rev ? `<div>Revisi ke-${s.rev}</div>` : ''}
     ${s.customer ? `<div>Pelanggan: ${esc(s.customer)}</div>` : ''}${s.staff ? `<div>Staff: ${esc(s.staff)}</div>` : ''}${s.void ? '<div><b>*** DIBATALKAN ***</b></div>' : ''}<hr>
     ${parts.join('<hr>')}<hr>
     <div class="rl"><span>Subtotal</span><span>${n0(s.subtotal)}</span></div>
     ${s.discount ? `<div class="rl"><span>Diskon</span><span>-${n0(s.discount)}</span></div>` : ''}
     <div class="rl"><b>TOTAL</b><b>${n0(s.total)}</b></div>
-    <div class="rl"><span>Bayar (${esc(s.method)})</span><span>${n0(s.paid)}</span></div>
-    <div class="rl"><span>Kembali</span><span>${n0(s.change)}</span></div><hr>
-    <div class="c">${esc(settings.foot)}</div></div>`;
+    ${s.bill ? '<div class="bx"><b>BELUM LUNAS</b></div><hr><div class="c">Struk ini adalah tagihan,<br>bukan bukti pembayaran.</div></div>' : payLinesHTML(s) + '<hr><div class="c">' + esc(settings.foot) + '</div></div>'}`;
+}
+function payLinesHTML(s) {
+  const pays = (s.pays || []).map(p => `<div>${fmtTime(p.t)}</div><div class="rl"><span>Bayar susulan</span><span>${n0(p.amt)}</span></div>`).join('');
+  const dn = s.change < 0;
+  return `<div class="rl"><span>Bayar${s.method ? ' (' + esc(s.method) + ')' : ''}</span><span>${n0(s.paid)}</span></div>${pays}`
+    + (dn ? `<div class="rl"><b>KURANG BAYAR</b><b>-${n0(-s.change)}</b></div><div class="bx"><b>BELUM LUNAS (UTANG)</b></div>`
+          : `<div class="rl"><span>Kembali</span><span>${n0(s.change)}</span></div>`);
+}
+function billSale() {
+  const { subtotal, disc, total } = calc();
+  return { bill: true, no: '', time: Date.now(), customer: $('#cust').value.trim(), staff: $('#staff').value.trim(),
+    items: cart.map(c => { const p = prod(c.id); return { id: p.id, code: p.code, name: p.name, price: p.price, qty: c.qty, unit: p.unit, cat: p.cat || '', cv: convOf(p) }; }),
+    subtotal, discount: disc, total, method: '', paid: 0, change: 0, void: false };
+}
+function printBill() {
+  if (!cart.length) { toast('Keranjang masih kosong'); return; }
+  const b = billSale(); curReceipt = b;
+  printHTML(receiptHTML(b), 'struk');
 }
 function showReceipt(s) { curReceipt = s; $('#modalBody').innerHTML = receiptHTML(s); $('#modal').classList.add('on'); }
 function printReceiptNow() { if (curReceipt) printHTML(receiptHTML(curReceipt), 'struk'); }
@@ -1611,9 +1637,9 @@ function renderReport() {
   $('#top').innerHTML = top.length ? top.map(([n, a], i) => `${i + 1}. ${esc(n)} — ${r3(a.q)} ${esc(a.u || '')} (${rp(a.v)})`).join('<br>') : 'Belum ada data.';
   const shown = list.slice(0, histLimit);
   $('#sBody').innerHTML = shown.length ? shown.map(s => `<tr>
-    <td data-l="No. Struk">${esc(s.no)} ${s.void ? '<span class="tag v">batal</span>' : ''}${s.rev ? ' <span class="tag c">revisi ' + s.rev + '</span>' : ''}${s.customer || s.staff ? `<div class="sub">${s.customer ? 'Pelanggan: ' + esc(s.customer) : ''}${s.customer && s.staff ? ' · ' : ''}${s.staff ? 'Staff: ' + esc(s.staff) : ''}</div>` : ''}</td><td data-l="Waktu">${fmtTime(s.time)}</td><td data-l="Metode">${esc(s.method)}</td>
+    <td data-l="No. Struk">${esc(s.no)} ${s.void ? '<span class="tag v">batal</span>' : ''}${s.rev ? ' <span class="tag c">revisi ' + s.rev + '</span>' : ''}${!s.void && s.change < 0 ? ' <span class="tag v">utang ' + rp(-s.change) + '</span>' : ''}${s.customer || s.staff ? `<div class="sub">${s.customer ? 'Pelanggan: ' + esc(s.customer) : ''}${s.customer && s.staff ? ' · ' : ''}${s.staff ? 'Staff: ' + esc(s.staff) : ''}</div>` : ''}</td><td data-l="Waktu">${fmtTime(s.time)}</td><td data-l="Metode">${esc(s.method)}</td>
     <td class="r" data-l="Total"><b>${rp(s.total)}</b></td>
-    <td class="r act" style="white-space:nowrap"><button class="btn sec sm" data-a="view" data-no="${esc(s.no)}">Lihat/Cetak</button>
+    <td class="r act" style="white-space:nowrap"><button class="btn sec sm" data-a="view" data-no="${esc(s.no)}">Lihat/Cetak</button>${!s.void && s.change < 0 ? ` <button class="btn sm" data-a="pay" data-no="${esc(s.no)}">Terima Bayar</button>` : ''}
     ${s.void ? '' : ` <button class="btn sec sm" data-a="edit" data-no="${esc(s.no)}">Edit</button> <button class="btn sec sm" style="color:var(--red)" data-a="void" data-no="${esc(s.no)}">Batalkan</button>`}</td></tr>`).join('')
     : '<tr><td colspan="5" class="empty">Tidak ada transaksi pada filter ini.</td></tr>';
   const more = list.length - shown.length;
@@ -1622,10 +1648,24 @@ function renderReport() {
 }
 $('#sBody').addEventListener('click', e => {
   const b = e.target.closest('button[data-a]'); if (!b) return;
-  if (b.dataset.a === 'view') viewSale(b.dataset.no); else if (b.dataset.a === 'edit') openEdit(b.dataset.no); else voidSale(b.dataset.no);
+  if (b.dataset.a === 'view') viewSale(b.dataset.no); else if (b.dataset.a === 'edit') openEdit(b.dataset.no); else if (b.dataset.a === 'pay') payDebt(b.dataset.no); else voidSale(b.dataset.no);
 });
 ['hFrom', 'hTo'].forEach(id => $('#' + id).addEventListener('change', () => { histLimit = 100; renderReport(); }));
 $('#hSearch').addEventListener('input', () => { histLimit = 100; renderReport(); });
+function payDebt(no) {
+  const s = sales.find(x => x.no === no); if (!s || s.void || !(s.change < 0)) return;
+  const rest = -s.change;
+  const v = prompt('Sisa utang ' + rp(rest) + (s.customer ? ' (' + s.customer + ')' : '') + '.\nJumlah yang dibayar sekarang:', rest);
+  if (v === null) return;
+  const amt = num(v);
+  if (!(amt > 0)) { toast('Jumlah pembayaran tidak valid'); return; }
+  if (amt > rest) { toast('Melebihi sisa utang (' + rp(rest) + ')'); return; }
+  (s.pays = s.pays || []).push({ t: Date.now(), amt });
+  s.paid = s.paid + amt; s.change = s.paid - s.total; s.u = Date.now();
+  persist(salePut(s)); mark('sale', s.no);
+  renderReport(); showReceipt(s);
+  toast(s.change < 0 ? 'Pembayaran dicatat, sisa utang ' + rp(-s.change) : 'Utang lunas');
+}
 function viewSale(no) { const s = sales.find(x => x.no === no); if (s) showReceipt(s); }
 function voidSale(no) {
   const s = sales.find(x => x.no === no); if (!s) return;
@@ -2023,9 +2063,12 @@ function renderEditTotals() {
   const t = edTotals();
   $('#emSub').textContent = rp(t.subtotal); $('#emTot').textContent = rp(t.total);
   $('#emPaidWrap').style.display = t.cash ? '' : 'none';
-  $('#emChg').textContent = rp(Math.max(0, t.paid - t.total));
-  const bad = !ed.items.length ? 'Barang tidak boleh kosong. Untuk membatalkan transaksi gunakan tombol Batalkan di riwayat.' : (t.cash && t.paid < t.total ? 'Uang diterima kurang ' + rp(t.total - t.paid) : '');
-  $('#emMsg').textContent = bad; $('#emMsg').style.color = bad ? 'var(--red)' : '';
+  const short = t.cash && t.paid < t.total;
+  $('#emChg').textContent = short ? rpS(t.paid - t.total) : rp(Math.max(0, t.paid - t.total));
+  $('#emChgL').textContent = short ? 'Kurang bayar (utang)' : 'Kembalian';
+  const bad = !ed.items.length ? 'Barang tidak boleh kosong. Untuk membatalkan transaksi gunakan tombol Batalkan di riwayat.' : '';
+  $('#emMsg').textContent = bad || (short ? 'Kurang bayar ' + rp(t.total - t.paid) + ' akan dicatat sebagai utang pelanggan.' : '');
+  $('#emMsg').style.color = bad ? 'var(--red)' : (short ? 'var(--warn-t)' : '');
   $('#emSave').disabled = !!bad;
 }
 $('#emItems').addEventListener('click', e => {
@@ -2061,7 +2104,7 @@ function saveEdit() {
   const s = sales.find(x => x.no === ed.no); if (!s || s.void) { closeEdit(); return; }
   const t = edTotals();
   if (!ed.items.length) { toast('Barang tidak boleh kosong'); return; }
-  if (t.cash && t.paid < t.total) { toast('Uang diterima kurang'); return; }
+  if (t.cash && t.paid < t.total && !confirmDebt($('#emCust').value.trim(), t.total - t.paid, t.paid, t.total, '#emCust')) return;
   const need = arr => { const m = new Map(); arr.forEach(i => { const x = prod(i.id); if (!x || !tracked(x)) return; const hh = holderOf(x); m.set(hh.id, r3((m.get(hh.id) || 0) + i.qty * (i.cv ?? 1))); }); return m; };
   const oldN = need(s.items), newN = need(ed.items);
   const hids = new Set([...oldN.keys(), ...newN.keys()]);
