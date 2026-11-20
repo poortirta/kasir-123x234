@@ -35,6 +35,24 @@
   }
   function setMode(m) { try { localStorage.setItem(MODE_LS, m); } catch (_) {} }
 
+  // Ukuran huruf struk (diatur di perangkat yang tersambung printer):
+  //   normal | names (nama barang & teks besar) | all (semua baris besar)
+  const FONT_LS = 't123_printfont';
+  function getFont() {
+    try { const f = localStorage.getItem(FONT_LS); if (f === 'names' || f === 'all') return f; } catch (_) {}
+    return 'normal';
+  }
+  function setFont(f) { try { localStorage.setItem(FONT_LS, f); } catch (_) {} }
+  function applyFont(content) {
+    const f = getFont();
+    if (f === 'normal') return content;
+    return content.map(function (el) {
+      if (!el || el.size) return el;
+      if (el.type === 'text' || (f === 'all' && el.type === 'row')) return Object.assign({}, el, { size: 'large' });
+      return el;
+    });
+  }
+
   function statusNode() {
     let el = document.getElementById('cleanterPrintStatus');
     if (!el) {
@@ -196,6 +214,18 @@
     return message;
   }
 
+  // Pesan error sesuai mode: di mode "remote" kegagalan jaringan berarti Supabase, bukan Cleanter.
+  function explainPrintError(error, mode) {
+    const message = String(error && error.message || error || '');
+    if (mode === 'remote') {
+      if (/Failed to fetch|NetworkError|Load failed|AbortError|aborted/i.test(message)) {
+        return 'Tidak dapat terhubung ke Supabase. Periksa koneksi internet perangkat ini, lalu coba lagi.';
+      }
+      return message || 'Gagal mengirim ke perangkat printer.';
+    }
+    return explainBridgeError(error);
+  }
+
   async function bridgeHealth(timeoutMs) {
     const health = await fetchJson(BRIDGE + '/health', { method: 'GET', cache: 'no-store' }, timeoutMs || 45000);
     if (!health.response.ok || !health.body || health.body.status !== 'ok') {
@@ -212,7 +242,7 @@
   async function cleanterPrint(content, reference, onStep) {
     const health = await bridgeHealth();
     if (onStep) onStep('Mengirim struk...');
-    const payload = { paperWidth: PAPER_WIDTH, cut: true, content: content };
+    const payload = { paperWidth: PAPER_WIDTH, cut: true, content: applyFont(content) };
     const version = String(health.version || '0').split('.').map(Number);
     if ((version[0] || 0) > 1 || ((version[0] || 0) === 1 && (version[1] || 0) >= 5)) {
       payload.reference = String(reference || 'Toko 123').slice(0, 64);
@@ -326,7 +356,7 @@
       showStatus((label || 'Struk') + ' berhasil dicetak' + (mode === 'remote' ? ' di perangkat printer.' : '.'), 'ok');
       if (typeof toast === 'function') toast((label || 'Struk') + ' berhasil dicetak');
     } catch (error) {
-      const message = explainBridgeError(error);
+      const message = explainPrintError(error, mode);
       showStatus(message, 'error');
       if (typeof toast === 'function') toast(message);
       throw error;
@@ -537,6 +567,12 @@
       '<option value="local">Cetak langsung (printer tersambung di perangkat ini)</option>' +
       '<option value="host">Pusat Cetak (printer di sini + terima cetakan dari perangkat lain)</option>' +
       '<option value="remote">Kirim ke perangkat printer (tanpa printer di sini)</option>' +
+      '</select></div>' +
+      '<div style="grid-column:span 2"><label>Ukuran huruf struk (berlaku di perangkat yang tersambung printer)</label>' +
+      '<select id="printFont">' +
+      '<option value="normal">Normal</option>' +
+      '<option value="names">Besar: nama barang &amp; teks (angka tetap normal)</option>' +
+      '<option value="all">Besar: semua baris</option>' +
       '</select></div></div>' +
       '<div class="row mt">' +
       '<button class="btn fit" id="printHostBtn" type="button">Mulai Pusat Cetak</button>' +
@@ -559,6 +595,9 @@
       updateBanner();
     };
     sel.addEventListener('change', function () { setMode(sel.value); refresh(); });
+    const fsel = card.querySelector('#printFont');
+    fsel.value = getFont();
+    fsel.addEventListener('change', function () { setFont(fsel.value); });
     card.querySelector('#printHostBtn').addEventListener('click', async function () {
       if (host.running) hostStop(); else await hostStart();
       refresh();
@@ -571,7 +610,7 @@
         if (mode === 'remote') await sendRemote(buildTestReceipt(), 'Tes cetak', 'TES', function (m) { info.textContent = m; });
         else await cleanterPrint(buildTestReceipt(), 'Tes cetak', function (m) { info.textContent = m; });
         info.textContent = 'Tes cetak berhasil.'; info.style.color = '#6ee7b7';
-      } catch (e) { info.textContent = explainBridgeError(e); info.style.color = '#fbbf24'; }
+      } catch (e) { info.textContent = explainPrintError(e, mode); info.style.color = '#fbbf24'; }
     });
     refresh();
   }
