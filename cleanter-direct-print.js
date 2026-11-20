@@ -1,17 +1,3 @@
-/*
- * Toko 123 — Cleanter Direct Print Bridge + Antrean Cetak Multi-Perangkat
- * Paper: 80 mm | Printer: Bluetooth Classic ESC/POS via aplikasi Cleanter (Android)
- *
- * MODE (Pengaturan → "Printer & Cetak Struk", disimpan per perangkat):
- *   local  : cetak langsung ke Cleanter di perangkat ini (perilaku lama, default)
- *   host   : "Pusat Cetak" — seperti local, DAN menerima kerja cetak dari perangkat lain
- *   remote : tidak punya printer — kirim struk ke Pusat Cetak lewat Supabase
- *
- * Antrean memakai tabel `store` Supabase yang sudah ada (kind = 'printjob' dan
- * 'printhost'). TIDAK perlu mengubah SQL.
- *
- * Pasang file ini setelah <script> inline utama di index.html (sudah begitu).
- */
 (function () {
   'use strict';
 
@@ -36,21 +22,40 @@
   function setMode(m) { try { localStorage.setItem(MODE_LS, m); } catch (_) {} }
 
   // Ukuran huruf struk (diatur di perangkat yang tersambung printer):
-  //   normal | names (nama barang & teks besar) | all (semua baris besar)
+  //   normal | medium-names | medium-all | large-names | large-all
+  //   "names" = nama barang & teks saja; "all" = semua baris (baris angka dipecah jadi 2 baris teks)
   const FONT_LS = 't123_printfont';
+  const FONT_OK = ['medium-names', 'medium-all', 'large-names', 'large-all'];
   function getFont() {
-    try { const f = localStorage.getItem(FONT_LS); if (f === 'names' || f === 'all') return f; } catch (_) {}
+    try {
+      let f = localStorage.getItem(FONT_LS);
+      if (f === 'names') f = 'large-names';   // nilai lama
+      if (f === 'all') f = 'large-all';       // nilai lama
+      if (FONT_OK.indexOf(f) >= 0) return f;
+    } catch (_) {}
     return 'normal';
   }
   function setFont(f) { try { localStorage.setItem(FONT_LS, f); } catch (_) {} }
   function applyFont(content) {
     const f = getFont();
     if (f === 'normal') return content;
-    return content.map(function (el) {
-      if (!el || el.size) return el;
-      if (el.type === 'text' || (f === 'all' && el.type === 'row')) return Object.assign({}, el, { size: 'large' });
-      return el;
+    const size = f.indexOf('medium') === 0 ? 'medium' : 'large';
+    const all = /-all$/.test(f);
+    const out = [];
+    content.forEach(function (el) {
+      if (!el) return;
+      if (el.type === 'text') {
+        out.push(el.size ? el : Object.assign({}, el, { size: size }));
+      } else if (all && el.type === 'row') {
+        // 'row' tidak mendukung ukuran huruf -> pecah jadi teks kiri + teks kanan (rata kanan)
+        const bold = el.bold ? { bold: true } : {};
+        if (el.left) out.push(Object.assign({ type: 'text', text: String(el.left), size: size }, bold));
+        if (el.right) out.push(Object.assign({ type: 'text', text: String(el.right), align: 'right', size: size }, bold));
+      } else {
+        out.push(el);
+      }
     });
+    return out;
   }
 
   function statusNode() {
@@ -571,8 +576,10 @@
       '<div style="grid-column:span 2"><label>Ukuran huruf struk (berlaku di perangkat yang tersambung printer)</label>' +
       '<select id="printFont">' +
       '<option value="normal">Normal</option>' +
-      '<option value="names">Besar: nama barang &amp; teks (angka tetap normal)</option>' +
-      '<option value="all">Besar: semua baris</option>' +
+      '<option value="medium-names">Sedang: nama barang &amp; teks</option>' +
+      '<option value="medium-all">Sedang: semua baris</option>' +
+      '<option value="large-names">Besar: nama barang &amp; teks</option>' +
+      '<option value="large-all">Besar: semua baris</option>' +
       '</select></div></div>' +
       '<div class="row mt">' +
       '<button class="btn fit" id="printHostBtn" type="button">Mulai Pusat Cetak</button>' +
