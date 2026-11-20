@@ -654,6 +654,7 @@ body.cust nav,body.cust main{display:none!important}
   <div id="modalBody"></div>
   <div class="row mt">
     <button class="btn" onclick="printReceiptNow()">Cetak Struk</button>
+    <button class="btn sec" onclick="downloadReceipt()">Unduh Struk</button>
     <button class="btn sec" onclick="closeModal()">Tutup</button>
   </div>
 </div></div>
@@ -692,9 +693,9 @@ body.cust nav,body.cust main{display:none!important}
 </div></div>
 <div id="printFb"><div class="card">
   <h3>Jendela cetak tidak terbuka</h3>
-  <p class="sub">Biasanya terjadi bila file dibuka lewat pratinjau atau aplikasi lain, bukan langsung di browser. Ada dua cara:</p>
-  <p class="sub"><b>1.</b> Klik <b>Unduh file cetak</b>, lalu buka file hasil unduhan di Chrome atau Safari. Jendela cetak muncul otomatis.<br><b>2.</b> Buka aplikasi kasir ini langsung di Chrome/Safari (bukan lewat pratinjau), lalu klik cetak lagi.</p>
-  <div class="row mt"><button class="btn" onclick="downloadPrint()">Unduh file cetak</button><button class="btn sec" onclick="retryPrint()">Coba cetak lagi</button><button class="btn sec" onclick="closePrintFb()">Tutup</button></div>
+  <p class="sub">Browser di Android dan iPhone tidak selalu dapat membuka dialog cetak secara otomatis. Simpan struk sebagai file HTML, lalu buka file tersebut di browser untuk mencetak atau memilih Simpan sebagai PDF.</p>
+  <p class="sub"><b>Catatan Bluetooth:</b> halaman web tidak dapat mengirim perintah langsung ke semua printer Bluetooth. Di iPhone/iPad perlu aplikasi/layanan perantara yang mendukung model printer. Di Android gunakan aplikasi/layanan cetak yang sesuai dengan printer.</p>
+  <div class="row mt"><button class="btn" onclick="downloadPrint()">Unduh file struk</button><button class="btn sec" onclick="retryPrint()">Coba cetak lagi</button><button class="btn sec" onclick="closePrintFb()">Tutup</button></div>
 </div></div>
 <div id="toast"></div>
 <div id="printArea"></div>
@@ -1296,12 +1297,27 @@ function doPrint() {
 }
 function closePrintFb() { $('#printFb').classList.remove('on'); }
 function retryPrint() { closePrintFb(); doPrint(); }
+function makePrintDocument(autoPrint) {
+  if (!lastPrint) return '';
+  const css = [...document.querySelectorAll('style')].map(s => s.textContent).join('\n');
+  const page = lastPrint.kind === 'struk'
+    ? '@page{size:' + (settings.width === '80' ? '80' : '58') + 'mm auto;margin:2mm}'
+    : '@page{size:A4;margin:12mm}';
+  const script = autoPrint ? '<script>window.addEventListener("load",function(){setTimeout(function(){window.print()},500)})<\/script>' : '';
+  return '<!doctype html><html lang="id"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Struk ' + esc(settings.name) + '</title><style>' + css + '</style><style>' + page + 'html,body{background:#fff!important;color:#000!important;margin:0!important;padding:0!important}#printArea{display:block!important;padding:10px;max-width:100%;box-sizing:border-box}.receipt{background:#fff!important;color:#000!important}</style></head><body><div id="printArea">' + lastPrint.html + '</div>' + script + '</body></html>';
+}
 function downloadPrint() {
   if (!lastPrint) return;
-  const css = [...document.querySelectorAll('style')].map(s => s.textContent).join('\n');
-  const doc = '<!doctype html><html lang="id"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Cetak ' + esc(settings.name) + '</title><style>' + css + '</style><style>html,body{background:#fff!important;color:#000!important;margin:0!important;padding:0!important}#printArea{display:block!important;padding:10px}</style></head><body><div id="printArea">' + lastPrint.html + '</div><script>window.onload=function(){setTimeout(function(){window.print()},400)}<\/script></body></html>';
-  download('cetak-' + lastPrint.kind + '-' + ymd(Date.now()) + '.html', doc, 'text/html');
-  toast('File diunduh. Buka file itu di Chrome/Safari untuk mencetak');
+  const kind = lastPrint.kind || 'struk';
+  download('cetak-' + kind + '-' + ymd(Date.now()) + '.html', makePrintDocument(true), 'text/html;charset=utf-8');
+  closePrintFb();
+  toast('File struk diunduh. Buka dengan Chrome atau Safari untuk mencetak / Simpan sebagai PDF');
+}
+function downloadReceipt() {
+  if (!curReceipt) return;
+  lastPrint = { html: receiptHTML(curReceipt), kind: 'struk' };
+  download('struk-' + (curReceipt.no || 'sementara') + '-' + ymd(Date.now()) + '.html', makePrintDocument(false), 'text/html;charset=utf-8');
+  toast('Struk berhasil disiapkan sebagai file HTML');
 }
 window.addEventListener('afterprint', () => { $('#printArea').innerHTML = ''; });
 
@@ -1708,9 +1724,11 @@ function voidSale(no) {
   renderReport(); renderGrid(); toast('Transaksi dibatalkan, stok dikembalikan');
 }
 function download(name, text, type) {
+  const url = URL.createObjectURL(new Blob([text], { type }));
   const a = document.createElement('a');
-  a.href = URL.createObjectURL(new Blob([text], { type }));
-  a.download = name; document.body.appendChild(a); a.click(); a.remove();
+  a.href = url; a.download = name; a.style.display = 'none';
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 30000);
 }
 function exportCSV() {
   const q = v => '"' + String(v).replace(/"/g, '""') + '"';
@@ -2518,6 +2536,6 @@ window.addEventListener('online', () => syncNow());
 window.addEventListener('offline', updatePill);
 init();
 </script>
-<script src="./cleanter-direct-print.js?v=1"></script>
+<script src="./cleanter-direct-print.js"></script>
 </body>
 </html>
