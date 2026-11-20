@@ -1,3 +1,17 @@
+/*
+ * Toko 123 — Cleanter Direct Print Bridge + Antrean Cetak Multi-Perangkat
+ * Paper: 80 mm | Printer: Bluetooth Classic ESC/POS via aplikasi Cleanter (Android)
+ *
+ * MODE (Pengaturan → "Printer & Cetak Struk", disimpan per perangkat):
+ *   local  : cetak langsung ke Cleanter di perangkat ini (perilaku lama, default)
+ *   host   : "Pusat Cetak" — seperti local, DAN menerima kerja cetak dari perangkat lain
+ *   remote : tidak punya printer — kirim struk ke Pusat Cetak lewat Supabase
+ *
+ * Antrean memakai tabel `store` Supabase yang sudah ada (kind = 'printjob' dan
+ * 'printhost'). TIDAK perlu mengubah SQL.
+ *
+ * Pasang file ini setelah <script> inline utama di index.html (sudah begitu).
+ */
 (function () {
   'use strict';
 
@@ -138,7 +152,7 @@
         addText(content, item.name || 'Barang');
         addRow(
           content,
-          String(item.qty) + ' ' + String(item.unit || '') + ' x ' + money(item.price),
+          String(item.qty) + ' ' + String(typeof normUnit === 'function' ? normUnit(item.unit) : (item.unit || '')) + ' x ' + money(item.price),
           money((Number(item.qty) || 0) * (Number(item.price) || 0))
         );
       });

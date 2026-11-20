@@ -397,7 +397,7 @@ body.cust nav,body.cust main{display:none!important}
       <select id="pMode"><option value="sep">Stok terpisah per pilihan</option><option value="pool">Satu stok bersama, konversi satuan otomatis (dus, pak, bungkus, dll)</option></select>
       <div id="poolBox" style="display:none">
         <div class="form mt">
-          <div><label>Satuan dasar (terkecil)</label><input id="pBU" list="buList" placeholder="bks / rcg / pcs" autocomplete="off"><datalist id="buList"><option value="pcs"><option value="bks"><option value="rcg"><option value="lembar"><option value="botol"><option value="sachet"></datalist></div>
+          <div><label>Satuan dasar (terkecil)</label><select id="pBU"><option value="">Pilih…</option><option value="Pcs">Pcs</option><option value="Bks">Bks</option><option value="Pak">Pak</option><option value="Dus">Dus</option><option value="Bal">Bal</option><option value="Rcg">Rcg</option><option value="Lsn">Lsn</option></select></div>
           <div><label>Lacak stok</label><select id="pTrack"><option value="1">Ya</option><option value="0">Tidak</option></select></div>
           <div><label>Stok sekarang</label><input id="pStock" type="number" inputmode="decimal" step="any" min="0" value="0"></div>
           <div><label>dalam satuan</label><select id="pStockU"></select></div>
@@ -760,13 +760,24 @@ const prodId = code => 'c-' + code;
 const ROK_ORDER = ['bal', 'pak', 'bks'];
 const isRokokCat = c => String(c || '').trim().toLowerCase() === 'rokok';
 const isRokok = i => isRokokCat(i.cat || (prod(i.id) || {}).cat);
+const UNITS = ['Pcs', 'Bks', 'Pak', 'Dus', 'Bal', 'Rcg', 'Lsn'];
+function normUnit(u) {
+  const t = String(u == null ? '' : u).trim();
+  if (!t) return '';
+  const f = UNITS.find(x => x.toLowerCase() === t.toLowerCase());
+  return f || (t.charAt(0).toUpperCase() + t.slice(1));
+}
+function unitOptsHTML(val) {
+  const v = normUnit(val), list = v && UNITS.indexOf(v) < 0 ? UNITS.concat([v]) : UNITS;
+  return list.map(u => `<option value="${esc(u)}"${u === v ? ' selected' : ''}>${esc(u)}</option>`).join('');
+}
 function unitSummary(items, order) {
   const m = new Map();
-  items.forEach(i => { const u = i.unit || 'pcs'; m.set(u, r3((m.get(u) || 0) + i.qty)); });
-  const ri = u => { const k = order ? order.indexOf(u) : -1; return k < 0 ? 99 : k; };
+  items.forEach(i => { const u = normUnit(i.unit) || 'Pcs'; m.set(u, r3((m.get(u) || 0) + i.qty)); });
+  const ord = order ? order.map(normUnit) : null, ri = u => { const k = ord ? ord.indexOf(u) : -1; return k < 0 ? 99 : k; };
   return [...m.keys()].sort((a, b) => ri(a) - ri(b)).map(u => m.get(u) + ' ' + u).join(' ');
 }
-const catalogProduct = c => ({ id: prodId(c[0]), code: c[0], name: c[1] + ' (' + c[2] + ')', group: c[1], variant: c[2], cat: c[3], price: c[4], cost: 0, stock: 0, unit: c[5], track: false, u: 0 });
+const catalogProduct = c => ({ id: prodId(c[0]), code: c[0], name: c[1] + ' (' + c[2] + ')', group: c[1], variant: c[2], cat: c[3], price: c[4], cost: 0, stock: 0, unit: normUnit(c[5]), track: false, u: 0 });
 
 const SQL_SETUP = `create table if not exists public.store (
   kind text not null,
@@ -1323,7 +1334,7 @@ window.addEventListener('afterprint', () => { $('#printArea').innerHTML = ''; })
 
 function receiptHTML(s) {
   const w = settings.width === '80' ? '76mm' : '54mm';
-  const lineHTML = i => `<div>${esc(i.name)}</div><div class="rl"><span>${i.qty} ${esc(i.unit || '')} x ${n0(i.price)}</span><span>${n0(i.price * i.qty)}</span></div>`;
+  const lineHTML = i => `<div>${esc(i.name)}</div><div class="rl"><span>${i.qty} ${esc(normUnit(i.unit))} x ${n0(i.price)}</span><span>${n0(i.price * i.qty)}</span></div>`;
   const rok = s.items.filter(isRokok), oth = s.items.filter(i => !isRokok(i));
   const both = rok.length > 0 && oth.length > 0;
   const section = (title, arr, order) => {
@@ -1431,8 +1442,8 @@ function importCatalog(ask) {
   CATALOG.forEach(c => {
     const p = byCode.get(c[0]), nm = c[1] + ' (' + c[2] + ')';
     if (p) {
-      if (p.name !== nm || p.group !== c[1] || p.variant !== c[2] || p.cat !== c[3] || p.price !== c[4] || p.unit !== c[5]) {
-        Object.assign(p, { name: nm, group: c[1], variant: c[2], cat: c[3], price: c[4], unit: c[5] }); touch(p); upd++;
+      if (p.name !== nm || p.group !== c[1] || p.variant !== c[2] || p.cat !== c[3] || p.price !== c[4] || p.unit !== normUnit(c[5])) {
+        Object.assign(p, { name: nm, group: c[1], variant: c[2], cat: c[3], price: c[4], unit: normUnit(c[5]) }); touch(p); upd++;
       }
     } else { const np = catalogProduct(c); np.u = Date.now(); products.push(np); byCode.set(np.code, np); mark('product', np.id); add++; }
   });
@@ -1440,12 +1451,17 @@ function importCatalog(ask) {
   toast(add + ' barang baru, ' + upd + ' diperbarui');
 }
 
+function setBU(v) {
+  const el = $('#pBU'), n = normUnit(v);
+  if (n && ![...el.options].some(o => o.value === n)) el.insertAdjacentHTML('beforeend', `<option value="${esc(n)}">${esc(n)}</option>`);
+  el.value = n;
+}
 function vRowHTML(r) {
   return `<div class="vr" data-id="${esc(r.id || '')}">
     <div><label>Pilihan</label><input class="vv" list="varList" value="${esc(r.variant)}" placeholder="Satuan, Dus, Pak..." autocomplete="off"></div>
     <div><label>Harga jual (Rp)</label><input class="vp" type="number" inputmode="numeric" min="0" value="${r.price === '' ? '' : r.price}"></div>
     <div><label>Harga modal (Rp)</label><input class="vm" type="number" inputmode="numeric" min="0" value="${r.cost ? r.cost : ''}" placeholder="0"></div>
-    <div><label>Satuan</label><input class="vu" value="${esc(r.unit)}" placeholder="pcs"></div>
+    <div><label>Satuan</label><select class="vu">${unitOptsHTML(r.unit)}</select></div>
     <div><label>Kode</label><input class="vc" value="${esc(r.code)}" placeholder="otomatis"></div>
     <div class="sp"><label>Lacak stok</label><select class="vt"><option value="1" ${r.track ? 'selected' : ''}>Ya</option><option value="0" ${r.track ? '' : 'selected'}>Tidak</option></select></div>
     <div class="sp"><label>Stok</label><input class="vsk" type="number" inputmode="decimal" step="any" min="0" value="${r.stock}" ${r.track ? '' : 'disabled'}></div>
@@ -1484,7 +1500,7 @@ $('#pMode').addEventListener('change', () => {
       if (!(num(inp.value) > 1)) inp.value = g || 1;
       if (r.track) { any = true; S += r.stock * (num(inp.value) || 1); }
     });
-    if (!bu) { const one = rows.find(r => num(r.el.querySelector('.vcv').value) === 1); bu = (one && one.unit) || 'pcs'; $('#pBU').value = bu; }
+    if (!bu) { const one = rows.find(r => num(r.el.querySelector('.vcv').value) === 1); bu = normUnit((one && one.unit) || 'pcs'); setBU(bu); }
     $('#pTrack').value = any ? '1' : '0'; $('#pStock').value = r3(S); $('#pStockU').value = '1';
   } else {
     const S = num($('#pStock').value) * num($('#pStockU').value || 1), tr = $('#pTrack').value === '1';
@@ -1508,7 +1524,7 @@ $('#vRows').addEventListener('change', e => {
 function resetForm() {
   editKey = null; $('#pfTitle').textContent = 'Tambah Menu Baru'; $('#pSave').textContent = 'Simpan Menu';
   $('#pName').value = ''; $('#pCat').value = ''; $('#vRows').innerHTML = '';
-  $('#pMode').value = 'sep'; $('#pBU').value = ''; $('#pTrack').value = '1'; $('#pStock').value = 0; $('#pStockU').innerHTML = '';
+  $('#pMode').value = 'sep'; setBU(''); $('#pTrack').value = '1'; $('#pStock').value = 0; $('#pStockU').innerHTML = '';
   addVRow(); updatePoolUI();
 }
 function editGroup(key) {
@@ -1520,8 +1536,8 @@ function editGroup(key) {
   const pl = items.find(pooled), hh = pl ? holderOf(pl) : null;
   $('#pMode').value = pl ? 'pool' : 'sep';
   items.forEach(p => addVRow({ id: p.id, variant: p.variant || (items.length > 1 ? p.unit : ''), price: p.price, cost: p.cost || 0, unit: p.unit, code: p.code, track: tracked(p), stock: pooled(p) ? 0 : p.stock, conv: pooled(p) ? convOf(p) : 1 }));
-  if (hh) { $('#pBU').value = buOf(hh); $('#pTrack').value = tracked(hh) ? '1' : '0'; $('#pStock').value = r3(hh.stock); $('#pStockU').innerHTML = ''; }
-  else { $('#pBU').value = ''; $('#pStock').value = 0; $('#pStockU').innerHTML = ''; }
+  if (hh) { setBU(buOf(hh)); $('#pTrack').value = tracked(hh) ? '1' : '0'; $('#pStock').value = r3(hh.stock); $('#pStockU').innerHTML = ''; }
+  else { setBU(''); $('#pStock').value = 0; $('#pStockU').innerHTML = ''; }
   updatePoolUI();
   window.scrollTo({ top: 0, behavior: 'smooth' }); $('#pName').focus();
 }
@@ -1533,7 +1549,7 @@ function saveProduct() {
   if (key !== editKey && products.some(p => pgKey(p) === key)) { toast('Menu "' + base + '" sudah ada. Klik Edit pada menu itu untuk menambah pilihan.'); return; }
   const rows = [...document.querySelectorAll('#vRows .vr')].map(e => ({
     id: e.dataset.id, variant: e.querySelector('.vv').value.trim(), priceRaw: e.querySelector('.vp').value, cost: Math.max(0, num(e.querySelector('.vm').value)),
-    unit: e.querySelector('.vu').value.trim() || 'pcs', code: e.querySelector('.vc').value.trim(),
+    unit: normUnit(e.querySelector('.vu').value) || 'Pcs', code: e.querySelector('.vc').value.trim(),
     track: e.querySelector('.vt').value === '1', stock: num(e.querySelector('.vsk').value), conv: num(e.querySelector('.vcv').value)
   }));
   const poolMode = $('#pMode').value === 'pool';
@@ -1552,8 +1568,8 @@ function saveProduct() {
   let bu = '', poolTrack = false, poolS = 0, holderId = '';
   if (poolMode) {
     if (rows.some(r => !(r.conv > 0))) { toast('Isi tiap pilihan harus lebih dari 0'); return; }
-    bu = $('#pBU').value.trim();
-    if (!bu) { toast('Isi satuan dasar (misal bks, rcg, pcs)'); return; }
+    bu = normUnit($('#pBU').value);
+    if (!bu) { toast('Pilih satuan dasar (misal Bks, Rcg, Pcs)'); return; }
     poolTrack = $('#pTrack').value === '1';
     poolS = poolTrack ? r3(num($('#pStock').value) * num($('#pStockU').value || 1)) : 0;
     rows.forEach(r => { r.nid = r.id || uid(); });
@@ -2301,6 +2317,12 @@ document.addEventListener('keydown', e => {
 
 function migrate() {
   let changed = false;
+  products.forEach(p => {
+    let ch = false;
+    const nu = normUnit(p.unit); if (p.unit && nu !== p.unit) { p.unit = nu; ch = true; }
+    const nb = normUnit(p.bu); if (p.bu && nb !== p.bu) { p.bu = nb; ch = true; }
+    if (ch) { changed = true; if ((p.u || 0) > 0) touch(p); }
+  });
   const remap = new Map();
   products.forEach(p => {
     const c = CODEMAP.get(p.code);
